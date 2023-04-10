@@ -187,5 +187,71 @@ class YoloDetector:
     def __call__(self,*args):
         return self.predict(*args)
 
-if __name__=='__main__':
-    a = YoloDetector()
+def batch_process(spath, dpath, logtxt, scale=4):
+    if not os.path.exists(dpath):
+        os.makedirs(dpath)
+
+    face_detector = YoloDetector(device='cuda:0')
+    image_list = sorted([i for i in os.listdir(spath) if i.endswith('.png')])
+
+    for image in image_list:
+        print(image)
+        img_big = cv2.imread(os.path.join(spath, image))
+        H, W = img_big.shape[0:2]
+        padH, padW = int(np.ceil(H / (32*scale))) * 32*scale, int(np.ceil(W / (32*scale))) * (32*scale)
+        img_big_pad = np.zeros([padH, padW, 3], dtype=np.uint8)
+        img_big_pad[0:H, 0:W] = img_big[:, :]
+        img_rsz = cv2.resize(img_big_pad, (0, 0), fx=1.0/scale, fy=1.0/scale)
+
+        bboxes, points = face_detector.predict(img_rsz)
+        rsz_hw = np.array(img_rsz.shape[0:2])[::-1]
+        org_hw = np.array(img_big.shape[0:2])[::-1]
+        for idx, box in enumerate(bboxes[0]):
+            box = np.array(box)
+            pt1, pt2 = box[0:2], box[2:4]
+            
+            # expand zone, expand 2x for example
+            hw = pt2 - pt1
+            npt1 = pt1 - hw // 2
+            npt1[npt1 < 0] = 0
+            npt2 = pt2 + hw // 2
+            
+            # npt2[npt2 > rsz_hw] = rsz_hw[npt2 > rsz_hw]
+            # img_rsz = cv2.rectangle(img_rsz, npt1, npt2, (0, 0, 255))
+
+            org_pt1 = npt1 * scale
+            org_pt2 = npt2 * scale
+            org_pt2[org_pt2 > org_hw] = org_hw[org_pt2 > org_hw]
+            opt1x, opt1y = org_pt1
+            opt2x, opt2y = org_pt2
+            print(org_pt1, org_pt2)
+            img_crop = img_big_pad[opt1y:opt2y, opt1x:opt2x]
+            try:
+                if img_crop.size != 0:
+                    cv2.imwrite(os.path.join(dpath, image.replace('.', '-%d.' % idx)), img_crop)
+                    with open(logtxt, 'a+') as f:
+                        f.write('{}\t{}\t{}\t{}\n'.format(image, org_pt1, org_pt2, idx))
+            except(e):
+                print('error in ', image, img_crop.shape)
+
+
+if __name__ == '__main__':
+    # face_detector = YoloDetector(device='cuda:0')
+    #
+    # img = cv2.imread('test.png')
+    # img = cv2.resize(img, (1024, 1024))
+    # bboxes, points = face_detector.predict(img)
+    # print(bboxes)
+    # print(points)
+    # for box in bboxes[0]:
+    #     box = np.array(box)
+    #     pt1, pt2 = box[0:2], box[2:4]
+    #     hw = pt2 - pt1
+    #     npt1 = pt1 - hw // 2
+    #     npt2 = pt2 + hw // 2
+    #     img = cv2.rectangle(img, npt1, npt2, (0, 0, 255))
+    # for point in points[0][0]:
+    #     img = cv2.circle(img, point, 1, (255, 0, 0))
+    #     cv2.imwrite('res.png', img)
+
+    batch_process(r'./src/', r'./face/', r'./face/log.txt')
